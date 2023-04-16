@@ -1,0 +1,7 @@
+Arquitecture:
+  1. A user try to create a room giving an id;
+  2. Allow user to chose a category;
+  3. User create a room with a id to be validated by the backend;
+  4. If user succed in room creation, generate a link for sharing the room;
+    4.1. This page contains a user count, an nickname textbox and an start button;
+  5. Each connected user has an unic id
