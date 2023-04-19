@@ -1,17 +1,19 @@
 "use client";
-import { redirect } from "next/navigation";
+import { redirect, useRouter } from "next/navigation";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import { useEffect, useState } from "react";
 import { FaTimesCircle, FaChevronCircleUp } from "react-icons/fa";
-import io from "socket.io-client"
+import io from "socket.io-client";
+import { type } from "os";
 
-let socket;
+let socket: any;
 
 type Player = {
   name: string;
   role: "player" | "adm";
   isCurrentPlayer?: boolean;
+  id: string;
 };
 
 export default function Room({
@@ -23,25 +25,55 @@ export default function Room({
     redirect("/");
   }
 
-  const socketInitializer = async () => {
-    await fetch(`/api/socket/${searchParams.id}`)
-    socket = io()
+  let currentPlayerId = "";
+  const [players, setPlayers] = useState<Player[]>([]);
+  const router = useRouter();
 
-    socket.on('connect', () => {
-      console.log("connected")
-    })
-    socket.on('connected_users', (res) => {
-      console.log(res)
-    })
-  }
-  useEffect(() => { socketInitializer() }, [])
-
-  const [players, setPlayers] = useState<Player[]>([
-    { name: "teste", role: "player" },
-    { name: "teste2", role: "player" },
-    { name: "teste3", role: "player" },
-  ]);
   const currentPlayer = players.find((player) => player.isCurrentPlayer);
+  const socketInitializer = async () => {
+    await fetch("/api/socket");
+    socket = io();
+
+    socket.on("connect", () => {
+      console.log("connected");
+    });
+
+    socket.on("connected_id", (playerId: string) => {
+      currentPlayerId = playerId;
+    });
+
+    socket.on("kicked", () => {
+      console.log("oh no you got kicked");
+      router.push("/");
+    });
+
+    socket.on("promoted", () => {
+      console.log("you got promoted");
+      setPlayers((oldPlayers) => {
+        return oldPlayers.map((oldPlayer) => {
+          if (oldPlayer.isCurrentPlayer) {
+            return { ...oldPlayer, role: "adm" };
+          }
+          return { ...oldPlayer, role: "player" };
+        });
+      });
+    });
+
+    socket.on("connected_users", (players: Player[]) => {
+      if (players === null) return;
+      setPlayers(() => {
+        return players.map((player) => {
+          if (player.id === currentPlayerId) {
+            return { ...player, isCurrentPlayer: true };
+          }
+          return player;
+        });
+      });
+    });
+  };
+  useEffect(() => {
+    socketInitializer();
+  }, []);
 
   const formik = useFormik({
     initialValues: {
@@ -52,8 +84,6 @@ export default function Room({
     }),
     onSubmit: ({ name }, { resetForm, setErrors }) => {
       //@ts-ignore
-      socket.emit("join", { name, room: searchParams.id })
-
       if (players.find((player) => player.name === name)) {
         return setErrors({ name: "Someone already took this name" });
       }
@@ -63,26 +93,43 @@ export default function Room({
           (oldPlayer) => oldPlayer.isCurrentPlayer
         );
         if (!thereIsCurrentPlayer) {
-          if (!admPlayer)
+          if (!admPlayer) {
+            socket.emit("join", {
+              name,
+              role: "adm",
+            });
             return [
               {
                 name,
                 role: "adm",
                 isCurrentPlayer: true,
+                id: currentPlayerId,
               },
               ...oldPlayers,
             ];
+          }
+          socket.emit("join", {
+            name,
+            role: "player",
+            id: currentPlayerId,
+          });
           return [
             {
               name,
               role: "player",
               isCurrentPlayer: true,
+              id: currentPlayerId,
             },
             ...oldPlayers,
           ];
         }
         return oldPlayers.map((oldPlayer) => {
           if (oldPlayer.isCurrentPlayer) {
+            socket.emit("join", {
+              name,
+              role: oldPlayer.role,
+              id: currentPlayerId,
+            });
             return { ...oldPlayer, name };
           }
           return oldPlayer;
@@ -91,15 +138,17 @@ export default function Room({
       resetForm();
     },
   });
-  const handleRemovePlayer = (playerName: string) => {
+  const handleRemovePlayer = (playerId: string) => {
+    socket.emit("kick", playerId);
     setPlayers((oldPlayers) => {
-      return oldPlayers.filter((oldPlayer) => oldPlayer.name !== playerName);
+      return oldPlayers.filter((oldPlayer) => oldPlayer.id !== playerId);
     });
   };
-  const handlePromotePlayer = (playerName: string) => {
+  const handlePromotePlayer = (playerId: string) => {
+    socket.emit("promote", playerId);
     setPlayers((oldPlayers) => {
       return oldPlayers.map((oldPlayer) => {
-        if (oldPlayer.name === playerName) {
+        if (oldPlayer.id === playerId) {
           return { ...oldPlayer, role: "adm" };
         }
         if (oldPlayer.role === "adm") {
@@ -109,7 +158,6 @@ export default function Room({
       });
     });
   };
-
 
   return (
     <div className="flex justify-center items-center w-full h-full bg-gray-50">
@@ -170,7 +218,7 @@ export default function Room({
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
-                          handlePromotePlayer(player.name);
+                          handlePromotePlayer(player.id);
                         }}
                         className="hover:text-blue-600"
                       >
@@ -178,7 +226,7 @@ export default function Room({
                       </button>
                       <button
                         onClick={() => {
-                          handleRemovePlayer(player.name);
+                          handleRemovePlayer(player.id);
                         }}
                         className="hover:text-red-600"
                       >
